@@ -9,6 +9,7 @@
 #import "LNPopupBar+Private.h"
 #import "LNPopupCustomBarViewController+Private.h"
 #import "MarqueeLabel.h"
+#import "_LNPopupBase64Utils.h"
 
 @interface _LNPopupToolbar : UIToolbar @end
 @implementation _LNPopupToolbar
@@ -81,8 +82,7 @@ const NSInteger LNBackgroundStyleInherit = -1;
 	UIColor* _userBackgroundColor;
 	
 	UIBlurEffectStyle _actualBackgroundStyle;
-	
-	UIImageView* _imageView;
+	UIBlurEffect* _customBlurEffect;
 	
 	UIView* _shadowView;
     
@@ -171,12 +171,18 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 	{
 		self.preservesSuperviewLayoutMargins = YES;
 		
+		_inheritsVisualStyleFromDockingView = YES;
+		
 		_userBackgroundStyle = LNBackgroundStyleInherit;
+		
+		_translucent = YES;
 		
 		_backgroundView = [[UIVisualEffectView alloc] initWithEffect:nil];
 		_backgroundView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
 		_backgroundView.userInteractionEnabled = NO;
 		[self addSubview:_backgroundView];
+		
+		_resolvedStyle = _LNPopupResolveBarStyleFromBarStyle(_barStyle);
 		
 		[self _innerSetBackgroundStyle:LNBackgroundStyleInherit];
 		
@@ -188,6 +194,8 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 		
 		_titlesView = [[UIView alloc] initWithFrame:self.bounds];
 		_titlesView.autoresizingMask = UIViewAutoresizingNone;
+		_titlesView.accessibilityTraits = UIAccessibilityTraitButton;
+		_titlesView.isAccessibilityElement = YES;
 		
 		_backgroundView.accessibilityTraits = UIAccessibilityTraitButton;
 		_backgroundView.accessibilityIdentifier = @"PopupBarView";
@@ -212,8 +220,12 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 		_imageView.isAccessibilityElement = YES;
 		_imageView.layer.cornerRadius = 3;
 		_imageView.layer.masksToBounds = YES;
+        if (@available(iOS 11, *)) {
+            // support smart invert and therefore do not invert image view colors
+            _imageView.accessibilityIgnoresInvertColors = YES;
+        }
 		
-		[self addSubview:_imageView];
+		[_toolbar addSubview:_imageView];
 		
 		_shadowView = [UIView new];
 		_shadowView.backgroundColor = [UIColor colorWithWhite:169.0 / 255.0 alpha:1.0];
@@ -225,8 +237,6 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 		[_highlightView setBackgroundColor:[[UIColor blackColor] colorWithAlphaComponent:0.1]];
 		_highlightView.alpha = 0.0;
 		[self addSubview:_highlightView];
-		
-		_resolvedStyle = _LNPopupResolveBarStyleFromBarStyle(_barStyle);
 		
 		_marqueeScrollEnabled = [NSProcessInfo processInfo].operatingSystemVersion.majorVersion < 10;
 		_coordinateMarqueeScroll = YES;
@@ -271,8 +281,7 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 	[self bringSubviewToFront:_titlesView];
 	[self bringSubviewToFront:_shadowView];
 	
-	_shadowView.frame = CGRectMake(0, 0, self.toolbar.bounds.size.width, 1 / self.window.screen.scale);
-	_shadowView.hidden = _resolvedStyle == LNPopupBarStyleProminent;
+	_shadowView.frame = CGRectMake(0, 0, self.toolbar.bounds.size.width, 1 / self.window.screen.nativeScale);
 	
 	[self _layoutImageView];
 	[self _layoutTitles];
@@ -288,7 +297,10 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 	_userBackgroundStyle = backgroundStyle;
 	
 	_actualBackgroundStyle = _userBackgroundStyle == LNBackgroundStyleInherit ? _LNBlurEffectStyleForSystemBarStyle(_systemBarStyle, _resolvedStyle) : _userBackgroundStyle;
-	[_backgroundView setValue:[UIBlurEffect effectWithStyle:_actualBackgroundStyle] forKey:@"effect"];
+
+	_customBlurEffect = [UIBlurEffect effectWithStyle:_actualBackgroundStyle];
+	
+	[_backgroundView setValue:_customBlurEffect forKey:@"effect"];
 	
 	if(_userBackgroundStyle == LNBackgroundStyleInherit)
 	{
@@ -302,6 +314,10 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 		}
 	}
 	
+	//Recalculate bar tint color
+	[self _internalSetBarTintColor:_userBarTintColor];
+	
+	//Recalculate labels
 	[self _setTitleLableFontsAccordingToBarStyleAndTint];
 }
 
@@ -331,12 +347,14 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 {
 	_userBarTintColor = barTintColor;
 	
-	UIColor* colorToUse = _userBarTintColor ?: _systemBarTintColor;
+	UIColor* colorToUse = [_userBarTintColor ?: _systemBarTintColor colorWithAlphaComponent:0.67];
 	
-	self.backgroundColor = [colorToUse colorWithAlphaComponent:1.0];
-	[_backgroundView setHidden:self.backgroundColor != nil];
+	if(_translucent == NO)
+	{
+		colorToUse = colorToUse ? [colorToUse colorWithAlphaComponent:1.0] : (_actualBackgroundStyle == UIBlurEffectStyleLight || _actualBackgroundStyle == UIBlurEffectStyleExtraLight) ? [UIColor whiteColor] : [UIColor blackColor];
+	}
 	
-	[self _setTitleLableFontsAccordingToBarStyleAndTint];
+	self.backgroundColor = colorToUse;
 }
 
 - (void)setBarTintColor:(UIColor *)barTintColor
@@ -415,6 +433,15 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 	_systemShadowColor = systemShadowColor;
 	
 	_shadowView.backgroundColor = systemShadowColor;
+}
+
+- (void)setTranslucent:(BOOL)translucent
+{
+	_translucent = translucent;
+	
+	_backgroundView.hidden = _translucent == NO;
+	
+	[self _internalSetBarTintColor:_userBarTintColor];
 }
 
 - (void)setTitle:(NSString *)title
@@ -520,6 +547,11 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 		[self.leftBarButtonItems enumerateObjectsUsingBlock:^(UIBarButtonItem* barButtonItem, NSUInteger idx, BOOL* stop)
 		 {
 			 UIView* itemView = [barButtonItem valueForKey:@"view"];
+			 //_UITAMICAdaptorView
+			 if([itemView.superview isKindOfClass:NSClassFromString(_LNPopupDecodeBase64String(@"X1VJVEFNSUNBZGFwdG9yVmlldw=="))])
+			 {
+				 itemView = itemView.superview;
+			 }
 			 
 			 if(_resolvedStyle == LNPopupBarStyleCompact)
 			 {
@@ -534,6 +566,10 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 		[self.rightBarButtonItems enumerateObjectsWithOptions:NSEnumerationReverse usingBlock:^(UIBarButtonItem* barButtonItem, NSUInteger idx, BOOL* stop)
 		 {
 			 UIView* itemView = [barButtonItem valueForKey:@"view"];
+			 if([itemView.superview isKindOfClass:NSClassFromString(_LNPopupDecodeBase64String(@"X1VJVEFNSUNBZGFwdG9yVmlldw=="))])
+			 {
+				 itemView = itemView.superview;
+			 }
 			 
 			 firstRightItemView = (firstRightItemView == nil || itemView.frame.origin.x < firstRightItemView.frame.origin.x) ? itemView : firstRightItemView;
 		 }];
@@ -543,6 +579,7 @@ static UIBlurEffectStyle _LNBlurEffectStyleForSystemBarStyle(UIBarStyle systemBa
 		CGRect frame = _titlesView.frame;
 		frame.origin.x = leftMargin;
 		frame.size.width = rightMargin - leftMargin;
+		frame.size.height = self.bounds.size.height;
 		_titlesView.frame = frame;
 		
 		if(_needsLabelsLayout == YES)

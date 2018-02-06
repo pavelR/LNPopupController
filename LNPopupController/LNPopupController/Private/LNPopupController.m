@@ -12,14 +12,15 @@
 #import "LNPopupOpenTapGesutreRecognizer.h"
 #import "LNPopupLongPressGesutreRecognizer.h"
 #import "LNPopupInteractionPanGestureRecognizer.h"
+#import "_LNPopupBase64Utils.h"
 @import ObjectiveC;
 
 void __LNPopupControllerOutOfWindowHierarchy()
 {
 }
 
-static const CFTimeInterval LNPopupBarGestureHeightPercentThreshold = 0.2;
-static const CGFloat		LNPopupBarDeveloperPanGestureThreshold = 0;
+static const CGFloat LNPopupBarGestureHeightPercentThreshold = 0.2;
+static const CGFloat LNPopupBarDeveloperPanGestureThreshold = 0;
 
 #pragma mark Popup Transition Coordinator
 
@@ -422,12 +423,7 @@ static CGFloat __smoothstep(CGFloat a, CGFloat b, CGFloat x)
 		}
 	};
 	
-//	if(_popupControllerTargetState == LNPopupPresentationStateOpen)
-//	{
-//		//When opening the popup, let it disappear right away on snap behavior.
-//		updatePopupBarAlpha();
-//	}
-	[UIView animateWithDuration:animated ? resolvedStyle == LNPopupInteractionStyleSnap ? 0.65 : 0.5 : 0.0 delay:0.0 usingSpringWithDamping:spring ? 0.8 : 1.0 initialSpringVelocity:0 options:UIViewAnimationOptionLayoutSubviews | UIViewAnimationOptionAllowAnimatedContent | UIViewAnimationOptionBeginFromCurrentState animations:^
+	[UIView animateWithDuration:animated ? (resolvedStyle == LNPopupInteractionStyleSnap ? 0.65 : 0.5) : 0.0 delay:0.0 usingSpringWithDamping:spring ? 0.8 : 1.0 initialSpringVelocity:0 options:UIViewAnimationOptionLayoutSubviews | UIViewAnimationOptionAllowAnimatedContent | UIViewAnimationOptionBeginFromCurrentState animations:^
 	 {
 		 if(state != LNPopupPresentationStateTransitioning)
 		 {
@@ -577,6 +573,10 @@ static CGFloat __smoothstep(CGFloat a, CGFloat b, CGFloat x)
 				possibleScrollView.contentOffset = CGPointMake(possibleScrollView.contentOffset.x, _dismissScrollViewStartingContentOffset);
 			}
 		}
+		else
+		{
+			return;
+		}
 	}
 	
 	if(_dismissGestureStarted == NO && (resolvedStyle == LNPopupInteractionStyleDrag || _popupControllerState > LNPopupPresentationStateClosed))
@@ -672,19 +672,17 @@ static CGFloat __smoothstep(CGFloat a, CGFloat b, CGFloat x)
 		{
 			CGFloat barTransitionPercent = [self _percentFromPopupBar];
 			BOOL hasPassedHeighThreshold = _stateBeforeDismissStarted == LNPopupPresentationStateClosed ? barTransitionPercent > LNPopupBarGestureHeightPercentThreshold : barTransitionPercent < (1.0 - LNPopupBarGestureHeightPercentThreshold);
-			BOOL isPanUp = [pgr velocityInView:_containerController.view].y < 0;
-			BOOL isPanDown = [pgr velocityInView:_containerController.view].y > 0;
+			CGFloat panVelocity = [pgr velocityInView:_containerController.view].y;
 			
-			
-			if(isPanUp)
+			if(panVelocity < 0)
 			{
 				targetState = LNPopupPresentationStateOpen;
 			}
-			else if(isPanDown)
+			else if(panVelocity > 0)
 			{
 				targetState = LNPopupPresentationStateClosed;
 			}
-			else if(hasPassedHeighThreshold)
+			else if(hasPassedHeighThreshold == YES)
 			{
 				targetState = _stateBeforeDismissStarted == LNPopupPresentationStateClosed ? LNPopupPresentationStateOpen : LNPopupPresentationStateClosed;
 			}
@@ -865,6 +863,11 @@ static CGFloat __smoothstep(CGFloat a, CGFloat b, CGFloat x)
 
 - (void)_configurePopupBarFromBottomBar
 {
+	if(self.popupBar.inheritsVisualStyleFromDockingView == NO)
+	{
+		return;
+	}
+	
 	if([_bottomBar respondsToSelector:@selector(barStyle)])
 	{
 		[self.popupBar setSystemBarStyle:[(id<_LNPopupBarSupport>)_bottomBar barStyle]];
@@ -876,18 +879,22 @@ static CGFloat __smoothstep(CGFloat a, CGFloat b, CGFloat x)
 	}
 	self.popupBar.systemBackgroundColor = _bottomBar.backgroundColor;
 	
+	if([_bottomBar respondsToSelector:@selector(isTranslucent)])
+	{
+		self.popupBar.translucent = [(id<_LNPopupBarSupport>)_bottomBar isTranslucent];
+	}
+	
 #ifndef LNPopupControllerEnforceStrictClean
 	//backgroundView
 	static NSString* const bV = @"X2JhY2tncm91bmRWaWV3";
 	//backgroundView.shadowView.backgroundColor
 	static NSString* const bVsVbC = @"YmFja2dyb3VuZFZpZXcuc2hhZG93Vmlldy5iYWNrZ3JvdW5kQ29sb3I=";
 	
-	NSString* str1 = [[NSString alloc] initWithData:[[NSData alloc] initWithBase64EncodedString:bV options:0] encoding:NSUTF8StringEncoding];
+	NSString* str1 = _LNPopupDecodeBase64String(bV);
 	
 	if([_bottomBar respondsToSelector:NSSelectorFromString(str1)])
 	{
-		NSString* str2 = [[NSString alloc] initWithData:[[NSData alloc] initWithBase64EncodedString:bVsVbC options:0] encoding:NSUTF8StringEncoding];
-		
+		NSString* str2 = _LNPopupDecodeBase64String(bVsVbC);
 		
 		if([[NSProcessInfo processInfo] operatingSystemVersion].majorVersion >= 10)
 		{
